@@ -53,6 +53,7 @@ class Pipe(nn.Module):
         self.split_size = int(split_size)
         self.partitions, self.devices = _split_module(module)
         (self.in_queues, self.out_queues) = create_workers(self.devices)
+        self._micro_batches = None
 
     def forward(self, x):
         ''' Forward the input x through the pipeline. The return value should be put in the last device.
@@ -66,7 +67,32 @@ class Pipe(nn.Module):
         Please note that you should put the result on the last device. Putting the result on the same device as input x will lead to pipeline parallel training failing.
         '''
         # BEGIN ASSIGN5_2_2
-        raise NotImplementedError("Pipeline Parallel Not Implemented Yet")
+        if len(self.partitions) == 0:
+            return x
+
+        micro_batches = list(x.split(self.split_size, dim=0))
+        if len(micro_batches) == 0:
+            return torch.empty_like(x).to(self.devices[-1])
+
+        # stash inputs so compute can grab them
+        self._micro_batches = [mb.to(self.devices[0]) for mb in micro_batches]
+        num_parts = len(self.partitions)
+        stage_slots: List[List[Optional[Tensor]]] = [
+            [None] * num_parts for _ in self._micro_batches
+        ]
+
+        try:
+            for schedule in _clock_cycles(len(self._micro_batches), num_parts):
+                self.compute(stage_slots, schedule)
+        finally:
+            # clean up just in case
+            self._micro_batches = None  # type: ignore
+
+        outputs = [stage_slots[i][-1] for i in range(len(stage_slots))]
+        outputs = [out for out in outputs if out is not None]
+        if not outputs:
+            return torch.empty(0, device=self.devices[-1])
+        return torch.cat(outputs, dim=0)
         # END ASSIGN5_2_2
 
     def compute(self, batches, schedule: List[Tuple[int, int]]) -> None:
@@ -82,5 +108,29 @@ class Pipe(nn.Module):
         devices = self.devices
 
         # BEGIN ASSIGN5_2_2
-        raise NotImplementedError("Pipeline Parallel Not Implemented Yet")
+        pending = []
+        for batch_idx, part_idx in schedule:
+            if part_idx == 0:
+                data = self._micro_batches[batch_idx]
+            else:
+                data = batches[batch_idx][part_idx - 1]
+            if data is None:
+                raise RuntimeError("Missing input for pipeline stage")
+            data = data.to(devices[part_idx])
+
+            partition = partitions[part_idx]
+            def make_task(partition=partition, data=data):
+                return Task(lambda: partition(data))
+
+            task = make_task()
+            self.in_queues[part_idx].put(task)
+            pending.append((batch_idx, part_idx))
+
+        for batch_idx, part_idx in pending:
+            success, payload = self.out_queues[part_idx].get()
+            if not success:
+                exc_type, exc, tb = payload
+                raise exc.with_traceback(tb)
+            _, result = payload
+            batches[batch_idx][part_idx] = result
         # END ASSIGN5_2_2
