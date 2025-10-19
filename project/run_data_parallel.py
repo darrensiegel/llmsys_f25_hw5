@@ -23,8 +23,6 @@ from torch.multiprocessing import Process
 from data_parallel.dataset import partition_dataset
 from utils import get_tokenizer, evaluate_bleu, save_grad_weights, collate_batch, evaluate_loss, generate, train
 
-PYTEST = False
-
 def average_gradients(model):
     '''Aggregate the gradients from different GPUs
     
@@ -72,7 +70,8 @@ def run_dp(
     model_max_length=128,
     n_epochs=10,
     batch_size=128,
-    learning_rate=1e-4):
+    learning_rate=1e-4,
+    pytest_mode=False):
     workdir = f'./workdir'
     os.makedirs(workdir, exist_ok=True)
 
@@ -141,7 +140,7 @@ def run_dp(
                                     rank=rank,
                                     average_gradients_fn=average_gradients)
         end = time.time()
-        if not PYTEST:
+        if not pytest_mode:
             training_time = end - start
             print(f'Epoch {epoch_idx} on Rank {rank}: Training Time = {training_time}, Tokens_per_sec = {avg_tokens_per_sec}')
             total_time.append(training_time)
@@ -182,7 +181,7 @@ def run_dp(
         else:
             save_grad_weights(model, rank)
             break
-    if not PYTEST:
+    if not pytest_mode:
         # You only get the average training time and tokens_per_second per device
         # To compute the throughput, you need to sum up the tokens_per_sec across all the devices based on epochs
         print(f'Rank {rank} training time: avg:{np.mean(total_time)}, std:{np.std(total_time)}, \
@@ -202,10 +201,7 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', type=float, default=1e-4)
     parser.add_argument('--world_size', type=int, default=2)
     args = parser.parse_args()
-    if args.pytest:
-        PYTEST = True
-    else:
-        PYTEST = False
+    pytest_mode = bool(args.pytest)
 
     try:
         mp.set_start_method('spawn', force=True)  # spawn keeps cuda from freaking out
@@ -235,7 +231,8 @@ if __name__ == '__main__':
                 args.model_max_length,
                 args.n_epochs,
                 args.batch_size,
-                args.learning_rate))
+                args.learning_rate,
+                pytest_mode))
         proc.daemon = False
         proc.start()
         processes.append(proc)
