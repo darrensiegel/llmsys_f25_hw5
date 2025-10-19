@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader 
 import torch.distributed as dist
+import torch.multiprocessing as mp
 from torch.multiprocessing import Process
 
 from data_parallel.dataset import partition_dataset
@@ -200,6 +201,11 @@ if __name__ == '__main__':
         PYTEST = True
     else:
         PYTEST = False
+
+    try:
+        mp.set_start_method('spawn', force=True)  # spawn keeps cuda from freaking out
+    except RuntimeError:
+        pass  # already set, not worth stressing
 
     processes = []
 
