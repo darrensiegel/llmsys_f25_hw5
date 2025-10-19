@@ -1,0 +1,8 @@
+__pycache__
+slurm*
+workdir
+tests/model*.pth
+venv/
+.vscode/
+AGENTS.md  
+
