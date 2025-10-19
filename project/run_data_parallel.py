@@ -82,7 +82,12 @@ def run_dp(
     ### Distributed Training Setup
     setup(rank, world_size, backend)
     
-    model = GPT2LMHeadModel(config=config).to(rank)
+    if torch.cuda.is_available():
+        # stick with whatever gpu this rank should poke
+        device = f'cuda:{rank % max(torch.cuda.device_count(), 1)}'
+    else:
+        device = 'cpu'  # shrug, still works
+    model = GPT2LMHeadModel(config=config).to(device)
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
@@ -111,7 +116,7 @@ def run_dp(
         tgt_key=tgt_key,
         tokenizer=tokenizer,
         model_max_length=model_max_length,
-        device=rank)
+        device=device)
     
     ### Get Partition of the Training Dataset on Device {rank}
     train_loader = partition_dataset(rank, world_size, dataset['train'], batch_size=batch_size, collate_fn=collate_fn)
