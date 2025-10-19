@@ -42,13 +42,16 @@ class GPT2ModelParallel(GPT2ModelCustom):
         # BEGIN ASSIGN5_2_3
         self.pipeline_parallel = True
 
-        blocks = []
+        stages = []
         for block in self.h:
             device = _retrieve_device(block)
-            blocks.append(WithDevice(block, device))
-            blocks.append(ExtractFirstItem())
+            wrapped = nn.Sequential(
+                block,
+                ExtractFirstItem()
+            )
+            stages.append(WithDevice(wrapped, device))
 
-        seq = nn.Sequential(*blocks)
+        seq = nn.Sequential(*stages)
         pipe = Pipe(seq, split_size=split_size)
         # END ASSIGN5_2_3
         self.h_pp = pipe
